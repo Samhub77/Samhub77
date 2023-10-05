@@ -1,0 +1,84 @@
+# 1.8 CODIGO CON ORDENES DE COMPRA-VENTA CICLADAS
+!pip install ccxt
+!pip install ta
+import ccxt
+import time
+import pandas as pd
+import ta
+
+   # Configuración de tus credenciales de Bitso
+api_key_bitso = 'wAqHzGCjUw'
+api_secret_bitso = '1ce10c43e70632eeb9baf6a6eb4ac864'
+bitso_client = ccxt.bitso({'apiKey': api_key_bitso, 'secret': api_secret_bitso})
+
+# Configuración de tus credenciales de Kraken
+api_key_kraken = 'MzF5C9MAkPJl5M8ftvL/aSvZRnkr1aMo3VVEygook4DUG7HtSYRDUhSh'
+api_secret_kraken = 'IWlKYnJ9oHcZZxWKd7XfqauH+UQ5g3CNcSN69cDmbf78SOlkcRGrEV04TrgVkHavzozTNsiSw43TTCXXfBovYg=='
+kraken_client = ccxt.kraken({'apiKey': api_key_kraken, 'secret': api_secret_kraken})
+
+# Función para obtener datos de Kraken
+def obtener_datos_kraken():
+    try:
+        # Obtener el símbolo para el par de trading BTC/USDT en Kraken
+        symbol_kraken = 'BTC/USDT'
+
+        # Obtener los datos de trading de Bitcoin en las últimas 24 horas en Kraken
+        trades_kraken = kraken_client.fetch_trades(symbol_kraken, limit=1000)
+
+        # Crear un DataFrame con los datos de trading de Kraken
+        df_kraken = pd.DataFrame(trades_kraken)
+
+        # Calcular el RSI utilizando la biblioteca 'ta' para Kraken
+        df_kraken['close'] = df_kraken['price']
+        df_kraken['rsi'] = ta.momentum.RSIIndicator(df_kraken['close'], window=14).rsi()
+
+        # Obtener el valor de RSI más reciente y el cambio en la cotización en Kraken
+        rsi_valor_kraken = df_kraken['rsi'].iloc[-1]
+        ohlcv_kraken = kraken_client.fetch_ohlcv(symbol_kraken, timeframe='1h', limit=1)
+        cambio_cotizacion_kraken = ((ohlcv_kraken[0][4] - ohlcv_kraken[0][1]) / ohlcv_kraken[0][1]) * 100
+
+        return rsi_valor_kraken, cambio_cotizacion_kraken
+
+    except Exception as e:
+        print(f"Error al obtener los datos de Kraken: {str(e)}")
+        return None, None
+
+# Función para abrir una posición de compra
+def abrir_posicion_compra():
+    try:
+        mercado_bitso = 'btc_mxn'
+        monto_pesos = 13  # Monto en pesos mexicanos                                                    CONDICIONES
+        ticker_bitso = bitso_client.fetch_ticker(mercado_bitso)
+        precio_actual_btc = ticker_bitso['last']
+
+        # Agrega las condiciones de apertura de compra aquí
+        rsi_valor, cambio_cotizacion = obtener_datos_kraken()
+        if rsi_valor is not None and cambio_cotizacion is not None:
+            if rsi_valor < 40 and cambio_cotizacion > -10: #                                            CONDICIONES
+                monto_btc = monto_pesos / precio_actual_btc
+                orden_compra_bitso = bitso_client.create_market_buy_order(mercado_bitso, monto_btc)
+                precio_compra = orden_compra_bitso['average']
+
+                print(f"Se abrió una posición de compra a mercado en Bitso. Comprados: {monto_btc} BTC por {monto_pesos} MXN.")
+                print(f"La compra se realizó a un precio aproximado de: {monto_pesos/monto_btc} MXN por Bitcoin")
+
+                # Una vez que se realiza la orden de compra, lanzamos la orden de venta
+                # Calcular precio de venta un 2% superior al de compra                                  CONDICIONES
+                precio_venta = monto_pesos * 1.021 / monto_btc
+                orden_venta_bitso = bitso_client.create_limit_sell_order(mercado_bitso, monto_btc, precio_venta)
+                print(f"Se lanzó una orden de venta a {precio_venta} MXN por BTC.")
+
+                # Esperar hasta que se complete la orden de venta
+                while True:
+                    estado_orden = bitso_client.fetch_order(orden_venta_bitso['id'], mercado_bitso)
+                    if estado_orden['status'] == 'closed':
+                        print(f"La orden de venta se completó.")
+                        break
+                    time.sleep(60)  # Esperar 60 segundos antes de verificar nuevamente
+
+    except Exception as e:
+        print(f"Error al abrir la posición de compra en Bitso: {str(e)}")
+
+# Ciclo principal
+while True:
+    abrir_posicion_compra()
